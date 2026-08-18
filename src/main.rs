@@ -36,6 +36,9 @@ struct Editor {
     mode: Mode,
     pending: Pending,
     path: Option<PathBuf>,
+    /// Center the whole block (aligned on the widest line) instead of
+    /// centering each line individually.
+    block: bool,
     dirty: bool,
     undo: Vec<(Vec<String>, usize, usize)>,
     top: usize,
@@ -45,7 +48,7 @@ struct Editor {
 }
 
 impl Editor {
-    fn new(path: Option<PathBuf>) -> io::Result<Self> {
+    fn new(path: Option<PathBuf>, block: bool) -> io::Result<Self> {
         let lines = match &path {
             Some(p) if p.exists() => {
                 let text = fs::read_to_string(p)?;
@@ -65,6 +68,7 @@ impl Editor {
             mode: Mode::Normal,
             pending: Pending::None,
             path,
+            block,
             dirty: false,
             undo: Vec::new(),
             top: 0,
@@ -451,8 +455,20 @@ impl Editor {
             }
         }
 
-        // Horizontal: each line is centered on its own width.
-        let line_x0 = |line: &str| (w - line.chars().count().min(w)) / 2;
+        // Horizontal: either each line is centered on its own width, or the
+        // whole block is centered on its widest line (lines left-aligned).
+        let block_x0 = self.block.then(|| {
+            let max_len = self
+                .lines
+                .iter()
+                .map(|l| l.chars().count())
+                .max()
+                .unwrap_or(0);
+            (w - max_len.min(w)) / 2
+        });
+        let line_x0 = |line: &str| {
+            block_x0.unwrap_or_else(|| (w - line.chars().count().min(w)) / 2)
+        };
 
         queue!(out, Clear(ClearType::All))?;
         for (i, line) in
@@ -539,8 +555,16 @@ fn run(editor: &mut Editor) -> io::Result<()> {
 }
 
 fn main() -> io::Result<()> {
-    let path = env::args().nth(1).map(PathBuf::from);
-    let mut editor = Editor::new(path)?;
+    let mut block = false;
+    let mut path = None;
+    for arg in env::args().skip(1) {
+        if arg == "--block" {
+            block = true;
+        } else {
+            path = Some(PathBuf::from(arg));
+        }
+    }
+    let mut editor = Editor::new(path, block)?;
 
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;

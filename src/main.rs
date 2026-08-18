@@ -118,6 +118,7 @@ impl Editor {
             self.lines = lines;
             self.row = row;
             self.col = col;
+            self.dirty = true;
         }
     }
 
@@ -126,6 +127,15 @@ impl Editor {
             let mut text = self.lines.join("\n");
             text.push('\n');
             fs::write(p, text)?;
+        }
+        Ok(())
+    }
+
+    /// Write the buffer back to its file whenever it has unsaved edits.
+    fn autosave(&mut self) -> io::Result<()> {
+        if self.dirty && self.path.is_some() {
+            self.save()?;
+            self.dirty = false;
         }
         Ok(())
     }
@@ -556,20 +566,18 @@ fn run(editor: &mut Editor) -> io::Result<()> {
         {
             editor.handle_key(key)?;
         }
-        if editor.quit {
-            return Ok(());
-        }
         // Drain every already-queued event before redrawing, so fast typing
         // and pastes cost one repaint per batch instead of one per key.
-        while event::poll(Duration::ZERO)? {
+        while !editor.quit && event::poll(Duration::ZERO)? {
             if let Event::Key(key) = event::read()?
                 && key.kind != event::KeyEventKind::Release
             {
                 editor.handle_key(key)?;
             }
-            if editor.quit {
-                return Ok(());
-            }
+        }
+        editor.autosave()?;
+        if editor.quit {
+            return Ok(());
         }
     }
 }

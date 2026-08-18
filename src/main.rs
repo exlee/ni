@@ -6,7 +6,10 @@ use std::time::Duration;
 
 use crossterm::{
     cursor::{Hide, MoveTo, SetCursorStyle, Show},
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{
+        self, DisableFocusChange, EnableFocusChange, Event, KeyCode, KeyEvent,
+        KeyModifiers,
+    },
     execute, queue,
     style::Print,
     terminal::{
@@ -567,6 +570,11 @@ impl Editor {
 /// How long the normal-mode cursor stays visible after a keypress.
 const CURSOR_SHOW: Duration = Duration::from_secs(5);
 
+/// While idle, how often the hidden-cursor state is re-asserted. A recovered
+/// RACE session replays a screen snapshot that may include a visible cursor;
+/// the periodic Hide erases it even when recovery delivers no event.
+const HIDE_HEARTBEAT: Duration = Duration::from_secs(1);
+
 fn run(editor: &mut Editor) -> io::Result<()> {
     // Buffer each frame and flush it as a single write; the default stdout
     // handle would push every queued escape sequence through its own small
@@ -582,18 +590,40 @@ fn run(editor: &mut Editor) -> io::Result<()> {
             editor.show_cursor = false;
             execute!(out, Hide)?;
         }
-        if let Event::Key(key) = event::read()?
-            && key.kind != event::KeyEventKind::Release
-        {
-            editor.handle_key(key)?;
+        // Wait for the next event, re-asserting Hide once per second while
+        // the cursor should be invisible.
+        while !event::poll(HIDE_HEARTBEAT)? {
+            if editor.mode == Mode::Normal
+                && editor.prompt.is_none()
+                && !editor.show_cursor
+            {
+                execute!(out, Hide)?;
+            }
+        }
+        match event::read()? {
+            Event::Key(key) if key.kind != event::KeyEventKind::Release => {
+                editor.handle_key(key)?;
+            }
+            // A recovered/reattached session (RACE) replays the saved screen
+            // with the cursor visible; repaint with the cursor hidden again.
+            Event::FocusGained | Event::Resize(..) => {
+                editor.show_cursor = false;
+            }
+            _ => {}
         }
         // Drain every already-queued event before redrawing, so fast typing
         // and pastes cost one repaint per batch instead of one per key.
         while !editor.quit && event::poll(Duration::ZERO)? {
-            if let Event::Key(key) = event::read()?
-                && key.kind != event::KeyEventKind::Release
-            {
-                editor.handle_key(key)?;
+            match event::read()? {
+                Event::Key(key)
+                    if key.kind != event::KeyEventKind::Release =>
+                {
+                    editor.handle_key(key)?;
+                }
+                Event::FocusGained | Event::Resize(..) => {
+                    editor.show_cursor = false;
+                }
+                _ => {}
             }
         }
         editor.autosave()?;
@@ -616,11 +646,12 @@ fn main() -> io::Result<()> {
     let mut editor = Editor::new(path, block)?;
 
     terminal::enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableFocusChange)?;
     let result = run(&mut editor);
     execute!(
         io::stdout(),
         SetCursorStyle::DefaultUserShape,
+        DisableFocusChange,
         LeaveAlternateScreen
     )?;
     terminal::disable_raw_mode()?;

@@ -66,11 +66,14 @@ impl Editor {
             }
             _ => vec![String::new()],
         };
+        // With no file to open there is nothing to navigate yet; drop
+        // straight into insert mode.
+        let mode = if path.is_none() { Mode::Insert } else { Mode::Normal };
         Ok(Self {
             lines,
             row: 0,
             col: 0,
-            mode: Mode::Normal,
+            mode,
             pending: Pending::None,
             path,
             block,

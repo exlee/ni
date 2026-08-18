@@ -47,6 +47,9 @@ struct Editor {
     quit: bool,
     /// Save-as popup input; `Some` while the popup is open.
     prompt: Option<String>,
+    /// Normal-mode cursor visibility: hidden by default, shown for a short
+    /// while after a keypress.
+    show_cursor: bool,
 }
 
 impl Editor {
@@ -76,6 +79,7 @@ impl Editor {
             top: 0,
             quit: false,
             prompt: None,
+            show_cursor: false,
         })
     }
 
@@ -258,6 +262,7 @@ impl Editor {
     // --- key handling -------------------------------------------------------
 
     fn handle_key(&mut self, key: KeyEvent) -> io::Result<()> {
+        self.show_cursor = true;
         if self.prompt.is_some() {
             return self.handle_prompt(key);
         }
@@ -508,7 +513,9 @@ impl Editor {
                 Mode::Normal => SetCursorStyle::SteadyBlock,
                 Mode::Insert => SetCursorStyle::SteadyBar,
             };
-            queue!(out, MoveTo(cx as u16, cy as u16), style, Show)?;
+            if self.mode == Mode::Insert || self.show_cursor {
+                queue!(out, MoveTo(cx as u16, cy as u16), style, Show)?;
+            }
         }
         queue!(out, EndSynchronizedUpdate)?;
         out.flush()
@@ -554,8 +561,8 @@ impl Editor {
     }
 }
 
-/// Idle time in normal mode after which the cursor is hidden.
-const CURSOR_IDLE: Duration = Duration::from_secs(3);
+/// How long the normal-mode cursor stays visible after a keypress.
+const CURSOR_SHOW: Duration = Duration::from_secs(5);
 
 fn run(editor: &mut Editor) -> io::Result<()> {
     // Buffer each frame and flush it as a single write; the default stdout
@@ -564,7 +571,12 @@ fn run(editor: &mut Editor) -> io::Result<()> {
     let mut out = BufWriter::new(io::stdout());
     loop {
         editor.draw(&mut out)?;
-        if editor.mode == Mode::Normal && !event::poll(CURSOR_IDLE)? {
+        if editor.mode == Mode::Normal
+            && editor.prompt.is_none()
+            && editor.show_cursor
+            && !event::poll(CURSOR_SHOW)?
+        {
+            editor.show_cursor = false;
             execute!(out, Hide)?;
         }
         if let Event::Key(key) = event::read()?

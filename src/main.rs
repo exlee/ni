@@ -356,6 +356,7 @@ impl Editor {
             KeyCode::Char('^') => self.first_nonblank(),
             KeyCode::Char('w') => self.word_forward(),
             KeyCode::Char('b') => self.word_back(),
+            KeyCode::Char('B') => self.block = !self.block,
             KeyCode::Char('G') => {
                 self.row = self.lines.len() - 1;
                 self.col = self.clamped_col();

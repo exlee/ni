@@ -11,6 +11,11 @@ Press `B` in normal mode at any time to switch between the two centering
 styles: **line** centering (every line centered on its own) and **block**
 centering (the text keeps its shape and the whole block is centered as one).
 
+<p align="center">
+  <img src="assets/line-centering.png" width="410" alt="Line centering: every line centered on its own">
+  <img src="assets/block-centering.png" width="400" alt="Block centering: the whole block centered as one">
+</p>
+
 ## Usage
 
 ```sh

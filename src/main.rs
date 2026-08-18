@@ -554,6 +554,9 @@ impl Editor {
     }
 }
 
+/// Idle time in normal mode after which the cursor is hidden.
+const CURSOR_IDLE: Duration = Duration::from_secs(3);
+
 fn run(editor: &mut Editor) -> io::Result<()> {
     // Buffer each frame and flush it as a single write; the default stdout
     // handle would push every queued escape sequence through its own small
@@ -561,6 +564,9 @@ fn run(editor: &mut Editor) -> io::Result<()> {
     let mut out = BufWriter::new(io::stdout());
     loop {
         editor.draw(&mut out)?;
+        if editor.mode == Mode::Normal && !event::poll(CURSOR_IDLE)? {
+            execute!(out, Hide)?;
+        }
         if let Event::Key(key) = event::read()?
             && key.kind != event::KeyEventKind::Release
         {

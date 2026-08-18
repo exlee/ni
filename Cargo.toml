@@ -3,5 +3,9 @@ name = "race-notes"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "ni"
+path = "src/main.rs"
+
 [dependencies]
 crossterm = "0.28"

@@ -40,6 +40,8 @@ struct Editor {
     undo: Vec<(Vec<String>, usize, usize)>,
     top: usize,
     quit: bool,
+    /// Save-as popup input; `Some` while the popup is open.
+    prompt: Option<String>,
 }
 
 impl Editor {
@@ -67,6 +69,7 @@ impl Editor {
             undo: Vec::new(),
             top: 0,
             quit: false,
+            prompt: None,
         })
     }
 
@@ -239,10 +242,24 @@ impl Editor {
     // --- key handling -------------------------------------------------------
 
     fn handle_key(&mut self, key: KeyEvent) -> io::Result<()> {
+        if self.prompt.is_some() {
+            return self.handle_prompt(key);
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('c')
         {
             self.quit = true;
+            return Ok(());
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('s')
+        {
+            self.prompt = Some(
+                self.path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+            );
             return Ok(());
         }
         match self.mode {
@@ -377,6 +394,35 @@ impl Editor {
         Ok(())
     }
 
+    fn handle_prompt(&mut self, key: KeyEvent) -> io::Result<()> {
+        let input = self.prompt.as_mut().unwrap();
+        match key.code {
+            KeyCode::Esc => self.prompt = None,
+            KeyCode::Enter => {
+                let name = input.trim().to_string();
+                if !name.is_empty() {
+                    self.path = Some(PathBuf::from(name));
+                    self.save()?;
+                    self.dirty = false;
+                }
+                self.prompt = None;
+            }
+            KeyCode::Backspace => {
+                input.pop();
+            }
+            KeyCode::Char('c')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.prompt = None;
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                input.push(c);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn enter_insert(&mut self, offset: usize) {
         self.snapshot();
         let col = self.clamped_col();
@@ -421,6 +467,10 @@ impl Editor {
             )?;
         }
 
+        if let Some(input) = &self.prompt {
+            return self.draw_prompt(out, input.clone(), w, h);
+        }
+
         let x0 = line_x0(&self.lines[self.row]);
         let cx = (x0 + self.clamped_col()).min(w.saturating_sub(1));
         let cy = y0 + (self.row - self.top);
@@ -429,6 +479,46 @@ impl Editor {
             Mode::Insert => SetCursorStyle::SteadyBar,
         };
         queue!(out, MoveTo(cx as u16, cy as u16), style, Show)?;
+        out.flush()
+    }
+
+    /// Centered "Save as" popup; the cursor sits at the end of the input.
+    fn draw_prompt(
+        &self,
+        out: &mut impl Write,
+        input: String,
+        w: usize,
+        h: usize,
+    ) -> io::Result<()> {
+        let title = " Save as ";
+        let inner = (input.chars().count() + 2)
+            .max(title.chars().count())
+            .max(30)
+            .min(w.saturating_sub(2));
+        let bx = (w.saturating_sub(inner + 2)) / 2;
+        let by = h.saturating_sub(3) / 2;
+
+        // Show the tail of the input if it is wider than the box.
+        let shown: String = input
+            .chars()
+            .skip(input.chars().count().saturating_sub(inner - 1))
+            .collect();
+
+        let top = format!("┌{title}{}┐", "─".repeat(inner - title.chars().count()));
+        let mid = format!("│ {shown}{}│", " ".repeat(inner - 1 - shown.chars().count()));
+        let bot = format!("└{}┘", "─".repeat(inner));
+        queue!(
+            out,
+            MoveTo(bx as u16, by as u16),
+            Print(top),
+            MoveTo(bx as u16, (by + 1) as u16),
+            Print(mid),
+            MoveTo(bx as u16, (by + 2) as u16),
+            Print(bot),
+            MoveTo((bx + 2 + shown.chars().count()) as u16, (by + 1) as u16),
+            SetCursorStyle::SteadyBar,
+            Show
+        )?;
         out.flush()
     }
 }

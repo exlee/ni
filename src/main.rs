@@ -405,23 +405,14 @@ impl Editor {
             }
         }
 
-        // Horizontal: center the block on its widest visible line, so the
-        // text keeps its own alignment while sitting mid-screen.
-        let widest = self
-            .lines
-            .iter()
-            .skip(self.top)
-            .take(visible)
-            .map(|l| l.chars().count())
-            .max()
-            .unwrap_or(0)
-            .min(w);
-        let x0 = (w - widest) / 2;
+        // Horizontal: each line is centered on its own width.
+        let line_x0 = |line: &str| (w - line.chars().count().min(w)) / 2;
 
         queue!(out, Clear(ClearType::All))?;
         for (i, line) in
             self.lines.iter().skip(self.top).take(visible).enumerate()
         {
+            let x0 = line_x0(line);
             let clipped: String = line.chars().take(w - x0).collect();
             queue!(
                 out,
@@ -430,6 +421,7 @@ impl Editor {
             )?;
         }
 
+        let x0 = line_x0(&self.lines[self.row]);
         let cx = (x0 + self.clamped_col()).min(w.saturating_sub(1));
         let cy = y0 + (self.row - self.top);
         let style = match self.mode {

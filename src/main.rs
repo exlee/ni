@@ -1,15 +1,17 @@
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crossterm::{
-    cursor::{MoveTo, SetCursorStyle, Show},
+    cursor::{Hide, MoveTo, SetCursorStyle, Show},
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute, queue,
     style::Print,
     terminal::{
-        self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
+        self, BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate,
+        EnterAlternateScreen, LeaveAlternateScreen,
     },
 };
 
@@ -470,7 +472,9 @@ impl Editor {
             block_x0.unwrap_or_else(|| (w - line.chars().count().min(w)) / 2)
         };
 
-        queue!(out, Clear(ClearType::All))?;
+        // Hide the cursor and batch the whole frame inside a synchronized
+        // update so the clear + repaint land on screen atomically.
+        queue!(out, BeginSynchronizedUpdate, Hide, Clear(ClearType::All))?;
         for (i, line) in
             self.lines.iter().skip(self.top).take(visible).enumerate()
         {
@@ -484,17 +488,18 @@ impl Editor {
         }
 
         if let Some(input) = &self.prompt {
-            return self.draw_prompt(out, input.clone(), w, h);
+            self.draw_prompt(out, input.clone(), w, h)?;
+        } else {
+            let x0 = line_x0(&self.lines[self.row]);
+            let cx = (x0 + self.clamped_col()).min(w.saturating_sub(1));
+            let cy = y0 + (self.row - self.top);
+            let style = match self.mode {
+                Mode::Normal => SetCursorStyle::SteadyBlock,
+                Mode::Insert => SetCursorStyle::SteadyBar,
+            };
+            queue!(out, MoveTo(cx as u16, cy as u16), style, Show)?;
         }
-
-        let x0 = line_x0(&self.lines[self.row]);
-        let cx = (x0 + self.clamped_col()).min(w.saturating_sub(1));
-        let cy = y0 + (self.row - self.top);
-        let style = match self.mode {
-            Mode::Normal => SetCursorStyle::SteadyBlock,
-            Mode::Insert => SetCursorStyle::SteadyBar,
-        };
-        queue!(out, MoveTo(cx as u16, cy as u16), style, Show)?;
+        queue!(out, EndSynchronizedUpdate)?;
         out.flush()
     }
 
@@ -534,13 +539,15 @@ impl Editor {
             MoveTo((bx + 2 + shown.chars().count()) as u16, (by + 1) as u16),
             SetCursorStyle::SteadyBar,
             Show
-        )?;
-        out.flush()
+        )
     }
 }
 
 fn run(editor: &mut Editor) -> io::Result<()> {
-    let mut out = io::stdout();
+    // Buffer each frame and flush it as a single write; the default stdout
+    // handle would push every queued escape sequence through its own small
+    // line buffer.
+    let mut out = BufWriter::new(io::stdout());
     loop {
         editor.draw(&mut out)?;
         if let Event::Key(key) = event::read()?
@@ -550,6 +557,18 @@ fn run(editor: &mut Editor) -> io::Result<()> {
         }
         if editor.quit {
             return Ok(());
+        }
+        // Drain every already-queued event before redrawing, so fast typing
+        // and pastes cost one repaint per batch instead of one per key.
+        while event::poll(Duration::ZERO)? {
+            if let Event::Key(key) = event::read()?
+                && key.kind != event::KeyEventKind::Release
+            {
+                editor.handle_key(key)?;
+            }
+            if editor.quit {
+                return Ok(());
+            }
         }
     }
 }

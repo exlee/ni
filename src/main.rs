@@ -30,6 +30,7 @@ enum Pending {
     None,
     D,
     G,
+    Y,
     Z,
 }
 
@@ -53,6 +54,8 @@ struct Editor {
     /// Normal-mode cursor visibility: hidden by default, shown for a short
     /// while after a keypress.
     show_cursor: bool,
+    /// Line register filled by `dd`/`yy`, pasted with `p`/`P`.
+    register: Option<String>,
 }
 
 impl Editor {
@@ -86,6 +89,7 @@ impl Editor {
             quit: false,
             prompt: None,
             show_cursor: false,
+            register: None,
         })
     }
 
@@ -192,8 +196,20 @@ impl Editor {
         }
     }
 
+    /// Insert the register as a new line `offset` rows below the cursor
+    /// (0 = above, 1 = below) and move the cursor onto it.
+    fn paste_line(&mut self, offset: usize) {
+        if let Some(line) = self.register.clone() {
+            self.snapshot();
+            self.row += offset;
+            self.lines.insert(self.row, line);
+            self.col = self.clamped_col();
+        }
+    }
+
     fn delete_line(&mut self) {
         self.snapshot();
+        self.register = Some(self.lines[self.row].clone());
         if self.lines.len() == 1 {
             self.lines[0].clear();
         } else {
@@ -353,6 +369,12 @@ impl Editor {
                 }
                 return Ok(());
             }
+            Pending::Y => {
+                if code == KeyCode::Char('y') {
+                    self.register = Some(self.lines[self.row].clone());
+                }
+                return Ok(());
+            }
             Pending::Z => {
                 match code {
                     KeyCode::Char('Z') => {
@@ -384,7 +406,10 @@ impl Editor {
             }
             KeyCode::Char('g') => self.pending = Pending::G,
             KeyCode::Char('d') => self.pending = Pending::D,
+            KeyCode::Char('y') => self.pending = Pending::Y,
             KeyCode::Char('Z') => self.pending = Pending::Z,
+            KeyCode::Char('p') => self.paste_line(1),
+            KeyCode::Char('P') => self.paste_line(0),
             KeyCode::Char('i') => self.enter_insert(0),
             KeyCode::Char('a') => self.enter_insert(1),
             KeyCode::Char('I') => {

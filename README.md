@@ -42,6 +42,8 @@ knowledge required.
 | `gg` / `G` | first / last line |
 | `i` `a` `I` `A` `o` `O` | enter insert mode |
 | `x` / `D` / `dd` / `dw` | delete char / to end of line / line / word |
+| `yy` | yank line |
+| `p` / `P` | paste yanked/deleted line below / above |
 | `u` | undo |
 | `B` | toggle block/line centering |
 | `Ctrl+S` | save as (prompt for path) |

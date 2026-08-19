@@ -521,6 +521,10 @@ impl Editor {
             };
             if self.mode == Mode::Insert || self.show_cursor {
                 queue!(out, MoveTo(cx as u16, cy as u16), style, Show)?;
+            } else {
+                // Park the hidden cursor in the top-right corner so a
+                // restored session snapshot shows it there, not mid-text.
+                queue!(out, MoveTo(w.saturating_sub(1) as u16, 0))?;
             }
         }
         queue!(out, EndSynchronizedUpdate)?;
@@ -575,6 +579,13 @@ const CURSOR_SHOW: Duration = Duration::from_secs(5);
 /// the periodic Hide erases it even when recovery delivers no event.
 const HIDE_HEARTBEAT: Duration = Duration::from_secs(1);
 
+/// Hide the cursor and park it in the top-right corner, so a session
+/// snapshot that restores with a visible cursor shows it out of the way.
+fn park_hidden_cursor(out: &mut impl Write) -> io::Result<()> {
+    let (w, _) = terminal::size()?;
+    execute!(out, MoveTo(w.saturating_sub(1), 0), Hide)
+}
+
 fn run(editor: &mut Editor) -> io::Result<()> {
     // Buffer each frame and flush it as a single write; the default stdout
     // handle would push every queued escape sequence through its own small
@@ -588,7 +599,7 @@ fn run(editor: &mut Editor) -> io::Result<()> {
             && !event::poll(CURSOR_SHOW)?
         {
             editor.show_cursor = false;
-            execute!(out, Hide)?;
+            park_hidden_cursor(&mut out)?;
         }
         // Wait for the next event, re-asserting Hide once per second while
         // the cursor should be invisible.
@@ -597,7 +608,7 @@ fn run(editor: &mut Editor) -> io::Result<()> {
                 && editor.prompt.is_none()
                 && !editor.show_cursor
             {
-                execute!(out, Hide)?;
+                park_hidden_cursor(&mut out)?;
             }
         }
         match event::read()? {

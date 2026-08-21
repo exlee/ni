@@ -1,15 +1,11 @@
 [package]
-name = "race-notes"
-version = "0.1.0"
+name = "ni"
+version = "0.2.0"
 edition = "2024"
 description = "A small terminal label writer, made mostly for RACE"
 license = "MIT"
 repository = "https://github.com/exlee/ni"
 readme = "README.md"
-
-[[bin]]
-name = "ni"
-path = "src/main.rs"
 
 [dependencies]
 crossterm = "0.28"

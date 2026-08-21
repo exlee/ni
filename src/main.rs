@@ -605,17 +605,10 @@ impl Editor {
 /// How long the normal-mode cursor stays visible after a keypress.
 const CURSOR_SHOW: Duration = Duration::from_secs(5);
 
-/// While idle, how often the hidden-cursor state is re-asserted. A recovered
-/// RACE session replays a screen snapshot that may include a visible cursor;
-/// the periodic Hide erases it even when recovery delivers no event.
-const HIDE_HEARTBEAT: Duration = Duration::from_secs(1);
-
-/// Hide the cursor and park it in the bottom-right corner, so a session
-/// snapshot that restores with a visible cursor shows it out of the way.
-fn park_hidden_cursor(out: &mut impl Write) -> io::Result<()> {
-    let (w, h) = terminal::size()?;
-    execute!(out, MoveTo(w.saturating_sub(1), h.saturating_sub(1)), Hide)
-}
+/// While idle, how often the screen is repainted. A recovered RACE session
+/// may replay a snapshot with a visible cursor or a torn escape sequence;
+/// the periodic full frame erases both even when recovery delivers no event.
+const REPAINT_HEARTBEAT: Duration = Duration::from_secs(1);
 
 fn run(editor: &mut Editor) -> io::Result<()> {
     // Buffer each frame and flush it as a single write; the default stdout
@@ -630,17 +623,14 @@ fn run(editor: &mut Editor) -> io::Result<()> {
             && !event::poll(CURSOR_SHOW)?
         {
             editor.show_cursor = false;
-            park_hidden_cursor(&mut out)?;
+            continue; // repaint with the cursor hidden and parked
         }
-        // Wait for the next event, re-asserting Hide once per second while
-        // the cursor should be invisible.
-        while !event::poll(HIDE_HEARTBEAT)? {
-            if editor.mode == Mode::Normal
-                && editor.prompt.is_none()
-                && !editor.show_cursor
-            {
-                park_hidden_cursor(&mut out)?;
-            }
+        // Heartbeat: with no event within a second, redraw a full frame.
+        // Cursor state is only ever written inside these synchronized
+        // frames — a partial out-of-band escape can be torn apart by RACE
+        // session recovery and end up printed as literal text.
+        if !event::poll(REPAINT_HEARTBEAT)? {
+            continue;
         }
         match event::read()? {
             Event::Key(key) if key.kind != event::KeyEventKind::Release => {
